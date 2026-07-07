@@ -90,4 +90,4 @@ program counter.
   `invokedynamic`, which is not supported. Use `System.out.print("x = ")`
   followed by `System.out.println(n)` instead.
 
-Video: ![MiniJVMExplainer.mp4](/video/media/videos/minijvm_explainer/720p30/MiniJVMExplainer.mp4)
+Video: [MiniJVMExplainer.mp4](/video/media/videos/minijvm_explainer/720p30/MiniJVMExplainer.mp4)
