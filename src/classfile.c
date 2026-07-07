@@ -107,8 +107,11 @@ static void parse_constant_pool(Reader *r, ClassFile *cf) {
             skip_bytes(r, 2);
             break;
         case CONST_DYNAMIC:
-        case CONST_INVOKE_DYNAMIC:
             skip_bytes(r, 4);
+            break;
+        case CONST_INVOKE_DYNAMIC:
+            e->u.invoke_dynamic.bootstrap_index = read_u2(r);
+            e->u.invoke_dynamic.name_and_type_index = read_u2(r);
             break;
         case CONST_MODULE:
         case CONST_PACKAGE:
@@ -153,6 +156,36 @@ static void parse_member_attributes(Reader *r, const ClassFile *cf, CodeAttribut
         } else {
             skip_bytes(r, len);
         }
+    }
+}
+
+static void parse_bootstrap_methods(Reader *r, ClassFile *cf, uint32_t len) {
+    size_t end = r->pos + len;
+    if (end > r->size) die(r, "BootstrapMethods attribute overruns file");
+
+    cf->bootstrap_methods_count = read_u2(r);
+    cf->bootstrap_methods = xmalloc(sizeof(BootstrapMethod) * cf->bootstrap_methods_count);
+    for (uint16_t i = 0; i < cf->bootstrap_methods_count; i++) {
+        BootstrapMethod *bm = &cf->bootstrap_methods[i];
+        skip_bytes(r, 2); /* bootstrap_method_ref */
+        bm->argc = read_u2(r);
+        bm->argv = xmalloc(sizeof(uint16_t) * bm->argc);
+        for (uint16_t j = 0; j < bm->argc; j++)
+            bm->argv[j] = read_u2(r);
+    }
+    r->pos = end;
+}
+
+static void parse_class_attributes(Reader *r, ClassFile *cf) {
+    uint16_t attributes_count = read_u2(r);
+    for (uint16_t i = 0; i < attributes_count; i++) {
+        uint16_t name_index = read_u2(r);
+        uint32_t len = read_u4(r);
+        const char *name = cf_utf8(cf, name_index);
+        if (strcmp(name, "BootstrapMethods") == 0)
+            parse_bootstrap_methods(r, cf, len);
+        else
+            skip_bytes(r, len);
     }
 }
 
@@ -208,7 +241,7 @@ ClassFile *classfile_load(const char *path) {
         parse_member_attributes(&r, cf, &m->code);
     }
 
-    /* class-level attributes are irrelevant here; stop parsing */
+    parse_class_attributes(&r, cf);
     free(data);
     return cf;
 }
@@ -220,6 +253,9 @@ void classfile_free(ClassFile *cf) {
             free(cf->constant_pool[i].u.utf8.bytes);
     }
     free(cf->constant_pool);
+    for (uint16_t i = 0; i < cf->bootstrap_methods_count; i++)
+        free(cf->bootstrap_methods[i].argv);
+    free(cf->bootstrap_methods);
     for (uint16_t i = 0; i < cf->methods_count; i++)
         free(cf->methods[i].code.code);
     free(cf->methods);
@@ -269,4 +305,33 @@ MethodInfo *cf_find_method(const ClassFile *cf, const char *name, const char *de
             return m;
     }
     return NULL;
+}
+
+void cf_resolve_invoke_dynamic(const ClassFile *cf, uint16_t index,
+                               const char **name, const char **descriptor,
+                               uint16_t *bootstrap_index) {
+    const ConstantPoolEntry *e = cp_entry(cf, index, CONST_INVOKE_DYNAMIC);
+    const ConstantPoolEntry *nt =
+        cp_entry(cf, e->u.invoke_dynamic.name_and_type_index, CONST_NAME_AND_TYPE);
+    *name = cf_utf8(cf, nt->u.name_and_type.name_index);
+    *descriptor = cf_utf8(cf, nt->u.name_and_type.descriptor_index);
+    *bootstrap_index = e->u.invoke_dynamic.bootstrap_index;
+}
+
+const char *cf_bootstrap_string_arg(const ClassFile *cf, uint16_t bootstrap_index) {
+    if (bootstrap_index >= cf->bootstrap_methods_count) {
+        fprintf(stderr, "minijvm: bad bootstrap method index %u\n", bootstrap_index);
+        exit(1);
+    }
+    const BootstrapMethod *bm = &cf->bootstrap_methods[bootstrap_index];
+    if (bm->argc < 1) {
+        fprintf(stderr, "minijvm: bootstrap method %u has no arguments\n", bootstrap_index);
+        exit(1);
+    }
+    const ConstantPoolEntry *e = &cf->constant_pool[bm->argv[0]];
+    if (e->tag != CONST_STRING) {
+        fprintf(stderr, "minijvm: expected String bootstrap argument\n");
+        exit(1);
+    }
+    return cf_utf8(cf, e->u.string.string_index);
 }

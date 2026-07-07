@@ -89,3 +89,5 @@ program counter.
 - Avoid string concatenation (`"x = " + n`): javac compiles it to
   `invokedynamic`, which is not supported. Use `System.out.print("x = ")`
   followed by `System.out.println(n)` instead.
+
+Video: [](/video/media/videos/minijvm_explainer/720p30/MiniJVMExplainer.mp4)

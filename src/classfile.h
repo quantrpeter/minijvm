@@ -34,8 +34,14 @@ typedef struct {
         struct { uint16_t string_index; } string;          /* -> Utf8 */
         struct { uint16_t class_index, name_and_type_index; } ref; /* Field/Method/InterfaceMethod */
         struct { uint16_t name_index, descriptor_index; } name_and_type;
+        struct { uint16_t bootstrap_index, name_and_type_index; } invoke_dynamic;
     } u;
 } ConstantPoolEntry;
+
+typedef struct {
+    uint16_t argc;
+    uint16_t *argv; /* constant pool indices */
+} BootstrapMethod;
 
 typedef struct {
     uint16_t max_stack;
@@ -61,6 +67,8 @@ typedef struct {
     uint16_t super_class;
     uint16_t methods_count;
     MethodInfo *methods;
+    uint16_t bootstrap_methods_count;
+    BootstrapMethod *bootstrap_methods;
 } ClassFile;
 
 /* Parse a .class file from disk. Exits with an error message on failure. */
@@ -76,5 +84,13 @@ void cf_resolve_ref(const ClassFile *cf, uint16_t ref_index,
 
 /* Find a method by name and descriptor; returns NULL if not found. */
 MethodInfo *cf_find_method(const ClassFile *cf, const char *name, const char *descriptor);
+
+/* Resolve an InvokeDynamic constant: name, descriptor, bootstrap table index. */
+void cf_resolve_invoke_dynamic(const ClassFile *cf, uint16_t index,
+                               const char **name, const char **descriptor,
+                               uint16_t *bootstrap_index);
+
+/* First bootstrap argument as a String constant recipe (for makeConcatWithConstants). */
+const char *cf_bootstrap_string_arg(const ClassFile *cf, uint16_t bootstrap_index);
 
 #endif
