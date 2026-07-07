@@ -1,11 +1,19 @@
-"""Generate Cantonese narration audio with macOS `say -v Sinji` (zh_HK).
+"""Generate Cantonese narration audio with AWS Polly (voice: Hiujin, yue-CN).
 
-Run:  python3 gen_narration.py
-Writes one .aiff per section into narration/.
+Credentials are read from the standard AWS locations (environment variables
+AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY, or ~/.aws/credentials).
+
+Run:  .venv/bin/python gen_narration.py
+Writes one .mp3 per section into narration/.
 """
 
-import subprocess
+import io
 from pathlib import Path
+
+import boto3
+from pydub import AudioSegment
+
+TARGET_PEAK_DBFS = -3.0  # Polly 輸出偏細聲，統一做 peak normalize
 
 NARRATION = {
     "intro": (
@@ -15,8 +23,8 @@ NARRATION = {
     ),
     "pipeline": (
         "首先睇下成個流程。javac將Java原始碼編譯做class檔，"
-        "入面裝住俾堆疊機執行嘅bytecode，然後minijvm負責解析同執行。"
-        "minijvm得三個檔案：main點c係入口，classfile點c負責解析，"
+        "入面裝住俾堆疊機執行嘅bytecode，然後mini J V M負責解析同執行。"
+        "mini J V M得三個檔案：main點c係入口，classfile點c負責解析，"
         "interp點c就係個解譯器。"
     ),
     "classfile": (
@@ -67,7 +75,7 @@ NARRATION = {
         "方法return之後，結果會推返上呼叫者嘅堆疊。"
     ),
     "printing": (
-        "minijvm冇物件，咁println點算呢？"
+        "mini J V M冇物件，咁println點算呢？"
         "getstatic System out會推一個假嘅零上去，"
         "ldc推個字串指標，然後invokevirtual println會被攔截，"
         "直接轉做C語言嘅printf。"
@@ -79,23 +87,34 @@ NARRATION = {
         "話你知邊個opcode、喺邊個位置。"
     ),
     "outro": (
-        "minijvm刻意冇物件、冇垃圾回收、冇例外、冇執行緒。"
+        "mini J V M刻意冇物件、冇垃圾回收、冇例外、冇執行緒。"
         "剩返落嚟嘅就係JVM嘅精髓：解析個容器，"
         "然後行一個堆疊機嘅fetch decode execute主迴圈。"
-        "想自己試嘅話，make一下就得。多謝收睇，我哋下次見！"
+        "想自己試嘅話，make一下就得。"
+        "另外，中小學生如果想自己玩下bytecode，"
+        "可以去我哋學會自主研發嘅Semi Block度試下，"
+        "入面有JVM模擬器。多謝收睇，我哋下次見！"
     ),
 }
 
 
 def main():
+    polly = boto3.client("polly", region_name="us-east-1")
     out = Path(__file__).parent / "narration"
     out.mkdir(exist_ok=True)
     for name, text in NARRATION.items():
-        path = out / f"{name}.aiff"
-        subprocess.run(
-            ["say", "-v", "Sinji", "-o", str(path), text],
-            check=True,
+        resp = polly.synthesize_speech(
+            Text=text,
+            VoiceId="Hiujin",
+            Engine="neural",
+            LanguageCode="yue-CN",
+            OutputFormat="mp3",
+            SampleRate="24000",
         )
+        seg = AudioSegment.from_file(io.BytesIO(resp["AudioStream"].read()), format="mp3")
+        seg = seg.apply_gain(TARGET_PEAK_DBFS - seg.max_dBFS)
+        path = out / f"{name}.mp3"
+        seg.export(str(path), format="mp3", bitrate="128k")
         print(f"wrote {path}")
 
 

@@ -77,7 +77,7 @@ class MiniJVMExplainer(Scene):
     def narr_start(self, name):
         """播放一段旁白，並記低佢應該幾時完。"""
         self._narr_end_time = None
-        path = NARR_DIR / f"{name}.aiff"
+        path = NARR_DIR / f"{name}.mp3"
         if path.exists():
             self.add_sound(str(path))
             dur = AudioSegment.from_file(str(path)).duration_seconds
@@ -757,10 +757,21 @@ class MiniJVMExplainer(Scene):
         title = sans("自己試下", 40, weight=BOLD, color=C_OPCODE)
         grp = VGroup(title, cmds).arrange(DOWN, buff=0.7)
         self.play(FadeIn(title), FadeIn(cmds, shift=UP * 0.2))
-        self.wait(2)
+        self.wait(3)
+        self.play(FadeOut(grp))
+
+        # SemiBlock 推介
+        sb_q = sans("中小學生想自己玩下 bytecode？", 34, C_VALUE)
+        sb_name = sans("SemiBlock", 72, weight=BOLD, color=C_STRING)
+        sb_box = SurroundingRectangle(sb_name, color=C_STRING, buff=0.45, corner_radius=0.18)
+        sb_sub = sans("香港編程學會自主研發 · 內置 JVM 模擬器", 28, GREY_A)
+        sb = VGroup(sb_q, VGroup(sb_name, sb_box), sb_sub).arrange(DOWN, buff=0.65)
+        self.play(FadeIn(sb_q, shift=UP * 0.2))
+        self.play(Write(sb_name), Create(sb_box))
+        self.play(FadeIn(sb_sub, shift=UP * 0.2))
 
         end = sans("Hong Kong Programming Society · Peter", 28, GREY_A)
-        end.to_edge(DOWN, buff=0.7)
+        end.to_edge(DOWN, buff=0.55)
         self.play(FadeIn(end))
         self.narr_end()
         self.play(*[FadeOut(m) for m in self.mobjects], run_time=1.2)

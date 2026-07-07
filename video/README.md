@@ -1,7 +1,7 @@
 # minijvm 講解影片（廣東話版）
 
 用 [Manim Community](https://www.manim.community/) 整嘅 minijvm 完整動畫講解，
-配 macOS「善怡」(Sinji, zh_HK) 廣東話旁白。片頭係
+配 AWS Polly「Hiujin」(yue-CN, neural) 廣東話旁白。片頭係
 「Hong Kong Programming Society - Peter」，之後分 12 節：
 
 1. 成個流程 —— `.java` → `javac` → `.class` → minijvm
@@ -19,14 +19,15 @@
 
 ## 準備同渲染
 
-需要 Python 3 同 ffmpeg（`brew install ffmpeg`）；旁白用 macOS 內置
-`say` 指令生成，需要「善怡 (Sinji)」語音。
+需要 Python 3 同 ffmpeg（`brew install ffmpeg`）；旁白用 AWS Polly 生成，
+需要有 `polly:SynthesizeSpeech` 權限嘅 AWS 憑證（環境變數或者
+`~/.aws/credentials`）。
 
 ```sh
 cd video
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
-python3 gen_narration.py                    # 生成 narration/*.aiff 旁白
+.venv/bin/python gen_narration.py           # 生成 narration/*.mp3 旁白
 .venv/bin/manim render -qm minijvm_explainer.py MiniJVMExplainer
 ```
 
