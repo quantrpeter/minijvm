@@ -87,6 +87,30 @@ static void intercept_printstream(Frame *f, const char *name, const char *desc) 
     fflush(stdout);
 }
 
+/* Recipe from StringConcatFactory: constant text with \u0001 placeholders. */
+static char concat_buf[512];
+
+static const char *string_concat_i(const char *recipe, int32_t v) {
+    char *out = concat_buf;
+    size_t room = sizeof(concat_buf) - 1;
+    size_t n = 0;
+
+    for (const char *p = recipe; *p && n < room; p++) {
+        if ((unsigned char)*p == 0x01) {
+            int written = snprintf(out + n, room - n + 1, "%d", v);
+            if (written < 0 || (size_t)written > room - n) {
+                fprintf(stderr, "minijvm: string concat overflow\n");
+                exit(1);
+            }
+            n += (size_t)written;
+            continue;
+        }
+        out[n++] = *p;
+    }
+    out[n] = '\0';
+    return concat_buf;
+}
+
 int32_t interp_run(const ClassFile *cf, const MethodInfo *method,
                    const int32_t *args, int nargs) {
     if (!method->code.code) {
@@ -286,6 +310,23 @@ int32_t interp_run(const ClassFile *cf, const MethodInfo *method,
             int32_t result = interp_run(cf, callee, call_args, nargs);
             if (strchr(desc, ')')[1] != 'V')
                 push_i(&f, result);
+            break;
+        }
+        case 0xba: { /* invokedynamic */
+            uint16_t index = fetch_u2(&f);
+            fetch_u2(&f); /* reserved operand, must be 0 */
+            const char *name, *desc;
+            uint16_t bootstrap_index;
+            cf_resolve_invoke_dynamic(cf, index, &name, &desc, &bootstrap_index);
+            if (strcmp(name, "makeConcatWithConstants") == 0 &&
+                strcmp(desc, "(I)Ljava/lang/String;") == 0) {
+                const char *recipe = cf_bootstrap_string_arg(cf, bootstrap_index);
+                int32_t v = pop_i(&f);
+                push(&f, (Slot)string_concat_i(recipe, v));
+            } else {
+                fprintf(stderr, "minijvm: unsupported invokedynamic %s%s\n", name, desc);
+                exit(1);
+            }
             break;
         }
 
