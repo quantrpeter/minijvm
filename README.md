@@ -1,3 +1,5 @@
+![](/img/image1.png)
+
 # minijvm
 
 A tiny demonstration JVM written in pure C99. It parses a real Java `.class`
