@@ -1,5 +1,6 @@
 #include "interp.h"
 
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -14,27 +15,70 @@ typedef struct {
     Slot *locals;
     Slot *stack;
     int sp;
-    uint32_t pc;
+    uint32_t pc;      /* next byte to fetch */
+    uint32_t insn_pc; /* start of the instruction being executed */
 } Frame;
 
-static void trap(const Frame *f, const char *fmt, uint8_t opcode) {
+/* Mnemonics for every opcode the JVM defines, so an unsupported one can be
+ * reported by name. Gaps are the unused and reserved encodings. */
+static const char *const opcode_names[256] = {
+    "nop", "aconst_null", "iconst_m1", "iconst_0", "iconst_1", "iconst_2",
+    "iconst_3", "iconst_4", "iconst_5", "lconst_0", "lconst_1", "fconst_0",
+    "fconst_1", "fconst_2", "dconst_0", "dconst_1", "bipush", "sipush", "ldc",
+    "ldc_w", "ldc2_w", "iload", "lload", "fload", "dload", "aload", "iload_0",
+    "iload_1", "iload_2", "iload_3", "lload_0", "lload_1", "lload_2", "lload_3",
+    "fload_0", "fload_1", "fload_2", "fload_3", "dload_0", "dload_1", "dload_2",
+    "dload_3", "aload_0", "aload_1", "aload_2", "aload_3", "iaload", "laload",
+    "faload", "daload", "aaload", "baload", "caload", "saload", "istore",
+    "lstore", "fstore", "dstore", "astore", "istore_0", "istore_1", "istore_2",
+    "istore_3", "lstore_0", "lstore_1", "lstore_2", "lstore_3", "fstore_0",
+    "fstore_1", "fstore_2", "fstore_3", "dstore_0", "dstore_1", "dstore_2",
+    "dstore_3", "astore_0", "astore_1", "astore_2", "astore_3", "iastore",
+    "lastore", "fastore", "dastore", "aastore", "bastore", "castore", "sastore",
+    "pop", "pop2", "dup", "dup_x1", "dup_x2", "dup2", "dup2_x1", "dup2_x2",
+    "swap", "iadd", "ladd", "fadd", "dadd", "isub", "lsub", "fsub", "dsub",
+    "imul", "lmul", "fmul", "dmul", "idiv", "ldiv", "fdiv", "ddiv", "irem",
+    "lrem", "frem", "drem", "ineg", "lneg", "fneg", "dneg", "ishl", "lshl",
+    "ishr", "lshr", "iushr", "lushr", "iand", "land", "ior", "lor", "ixor",
+    "lxor", "iinc", "i2l", "i2f", "i2d", "l2i", "l2f", "l2d", "f2i", "f2l",
+    "f2d", "d2i", "d2l", "d2f", "i2b", "i2c", "i2s", "lcmp", "fcmpl", "fcmpg",
+    "dcmpl", "dcmpg", "ifeq", "ifne", "iflt", "ifge", "ifgt", "ifle",
+    "if_icmpeq", "if_icmpne", "if_icmplt", "if_icmpge", "if_icmpgt",
+    "if_icmple", "if_acmpeq", "if_acmpne", "goto", "jsr", "ret",
+    "tableswitch", "lookupswitch", "ireturn", "lreturn", "freturn", "dreturn",
+    "areturn", "return", "getstatic", "putstatic", "getfield", "putfield",
+    "invokevirtual", "invokespecial", "invokestatic", "invokeinterface",
+    "invokedynamic", "new", "newarray", "anewarray", "arraylength", "athrow",
+    "checkcast", "instanceof", "monitorenter", "monitorexit", "wide",
+    "multianewarray", "ifnull", "ifnonnull", "goto_w", "jsr_w",
+};
+
+static const char *opcode_name(uint8_t op) {
+    const char *name = opcode_names[op];
+    return name ? name : "reserved";
+}
+
+static void trap(const Frame *f, const char *fmt, ...) {
+    va_list ap;
     fprintf(stderr, "minijvm: ");
-    fprintf(stderr, fmt, opcode);
+    va_start(ap, fmt);
+    vfprintf(stderr, fmt, ap);
+    va_end(ap);
     fprintf(stderr, " at pc=%u in method %s%s\n",
-            f->pc, cf_utf8(f->cf, f->method->name_index),
+            f->insn_pc, cf_utf8(f->cf, f->method->name_index),
             cf_utf8(f->cf, f->method->descriptor_index));
     exit(1);
 }
 
 static void push(Frame *f, Slot v) {
     if (f->sp >= f->method->code.max_stack)
-        trap(f, "operand stack overflow (opcode 0x%02x)", f->method->code.code[f->pc]);
+        trap(f, "operand stack overflow in %s", opcode_name(f->method->code.code[f->insn_pc]));
     f->stack[f->sp++] = v;
 }
 
 static Slot pop(Frame *f) {
     if (f->sp <= 0)
-        trap(f, "operand stack underflow (opcode 0x%02x)", f->method->code.code[f->pc]);
+        trap(f, "operand stack underflow in %s", opcode_name(f->method->code.code[f->insn_pc]));
     return f->stack[--f->sp];
 }
 
@@ -46,7 +90,7 @@ static int32_t pop_i(Frame *f) { return (int32_t)pop(f); }
 static int descriptor_arg_count(const Frame *f, const char *desc) {
     int n = 0;
     const char *p = desc;
-    if (*p++ != '(') trap(f, "bad method descriptor (opcode 0x%02x)", 0xb8);
+    if (*p++ != '(') trap(f, "bad method descriptor %s", desc);
     while (*p && *p != ')') {
         if (*p == 'I') {
             n++;
@@ -125,17 +169,17 @@ int32_t interp_run(const ClassFile *cf, const MethodInfo *method,
         exit(1);
     }
 
-    Frame f = { cf, method, locals_buf, stack_buf, 0, 0 };
+    Frame f = { cf, method, locals_buf, stack_buf, 0, 0, 0 };
     memset(locals_buf, 0, sizeof(Slot) * method->code.max_locals);
     for (int i = 0; i < nargs; i++)
         f.locals[i] = (Slot)args[i];
 
     for (;;) {
-        uint32_t insn_pc = f.pc;
         if (f.pc >= method->code.code_length) {
             fprintf(stderr, "minijvm: pc fell off the end of the code\n");
             exit(1);
         }
+        f.insn_pc = f.pc;
         uint8_t op = fetch_u1(&f);
 
         switch (op) {
@@ -161,7 +205,7 @@ int32_t interp_run(const ClassFile *cf, const MethodInfo *method,
             } else if (e->tag == CONST_STRING) {
                 push(&f, (Slot)cf_utf8(cf, e->u.string.string_index));
             } else {
-                trap(&f, "ldc of unsupported constant type (opcode 0x%02x)", op);
+                trap(&f, "ldc of unsupported constant type (tag %u)", e->tag);
             }
             break;
         }
@@ -230,7 +274,7 @@ int32_t interp_run(const ClassFile *cf, const MethodInfo *method,
             case 0x9d: taken = v > 0;  break;
             case 0x9e: taken = v <= 0; break;
             }
-            if (taken) f.pc = insn_pc + offset;
+            if (taken) f.pc = f.insn_pc + offset;
             break;
         }
         case 0x9f: case 0xa0: case 0xa1: case 0xa2: case 0xa3: case 0xa4: { /* if_icmpeq..le */
@@ -245,12 +289,12 @@ int32_t interp_run(const ClassFile *cf, const MethodInfo *method,
             case 0xa3: taken = a > b;  break;
             case 0xa4: taken = a <= b; break;
             }
-            if (taken) f.pc = insn_pc + offset;
+            if (taken) f.pc = f.insn_pc + offset;
             break;
         }
         case 0xa7: { /* goto */
             int16_t offset = (int16_t)fetch_u2(&f);
-            f.pc = insn_pc + offset;
+            f.pc = f.insn_pc + offset;
             break;
         }
 
@@ -331,7 +375,7 @@ int32_t interp_run(const ClassFile *cf, const MethodInfo *method,
         }
 
         default:
-            trap(&f, "unimplemented opcode 0x%02x", op);
+            trap(&f, "unimplemented opcode %s (0x%02x)", opcode_name(op), op);
         }
     }
 }

@@ -73,6 +73,10 @@ typedef struct {
 
 /* Parse a .class file from disk. Exits with an error message on failure. */
 ClassFile *classfile_load(const char *path);
+/* Same, from bytes already in memory (a jar entry). Everything the parser
+ * keeps is copied, so the buffer can be freed afterwards. name is only used
+ * in error messages. */
+ClassFile *classfile_load_bytes(const uint8_t *data, size_t size, const char *name);
 void classfile_free(ClassFile *cf);
 
 /* Constant pool helpers. Exit on invalid index/tag. */

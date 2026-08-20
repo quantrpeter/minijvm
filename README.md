@@ -12,12 +12,12 @@ no threads, no verifier, single class only.
 
 ```sh
 make            # builds ./minijvm
-make test       # compiles examples/Test.java with javac and runs it under minijvm
-make verify     # runs the demo under both minijvm and the real JVM and diffs output
+make test       # compiles examples/Test.java with javac and runs it as a class and as a jar
+make verify     # diffs minijvm against the real JVM: class, deflated jar, stored jar
 make clean
 ```
 
-You need a C compiler always, and a JDK (`javac`) for `make test`/`verify`.
+You need a C compiler always, and a JDK (`javac`, `jar`) for `make test`/`verify`.
 On macOS the Makefile automatically picks up a Homebrew OpenJDK if present.
 
 To run any class file directly:
@@ -26,12 +26,29 @@ To run any class file directly:
 ./minijvm path/to/Foo.class
 ```
 
+Or run a jar, which reads `Main-Class` from its manifest:
+
+```sh
+./minijvm -jar path/to/app.jar
+```
+
+A jar is a zip archive, so `src/jar.c` contains a small zip reader and a
+DEFLATE decompressor — no zlib, still pure C99. Only the class named by
+`Main-Class` is loaded, so the single-class limit below still applies.
+
+Trailing arguments are accepted so a real `java` command line can be pasted in
+unchanged, but they are announced and dropped: handing them over would need a
+`String[]`, and objects are the one thing the interpreter has none of. `main`
+receives a null in local 0 regardless.
+
 ## Layout
 
 - `src/classfile.c` / `.h` — binary `.class` file parser: magic, constant
   pool, methods, and the `Code` attribute (bytecode, max_stack, max_locals)
 - `src/interp.c` / `.h` — loop-and-switch bytecode interpreter; one C stack
   frame per Java frame (`invokestatic` recurses in C)
+- `src/jar.c` / `.h` — zip reader (central directory, stored and deflated
+  entries) plus a from-scratch inflate, and `Main-Class` out of the manifest
 - `src/main.c` — loads the class, finds `main([Ljava/lang/String;)V`, runs it
 - `examples/Test.java` — demo exercising every supported feature
 
@@ -39,6 +56,10 @@ To run any class file directly:
 
 ```mermaid
 flowchart TD
+    J0["app.jar"] --> J1["jar_open()<br/><i>src/jar.c</i><br/>find zip central directory"]
+    J1 --> J2["inflate META-INF/MANIFEST.MF,<br/>read Main-Class"]
+    J2 --> J3["inflate com/foo/Bar.class<br/>into memory"]
+    J3 --> B
     A["Foo.class file"] --> B["classfile_load()<br/><i>src/classfile.c</i>"]
     B --> B1["Check magic 0xCAFEBABE<br/>and version"]
     B1 --> B2["Parse constant pool<br/>(UTF-8, ints, strings, refs)"]
@@ -78,6 +99,7 @@ and forwarded to `printf`.
 | Branches | `ifeq`..`ifle`, `if_icmpeq`..`if_icmple`, `goto` |
 | Calls | `invokestatic` (same class, int params), `return`, `ireturn` |
 | I/O | `getstatic System.out` + `invokevirtual PrintStream.print/println` intercepted and mapped to `printf` |
+| Concatenation | `invokedynamic` `makeConcatWithConstants` for one int joined to constant text |
 
 Anything else stops the interpreter with a clear error naming the opcode and
 program counter.
@@ -86,8 +108,12 @@ program counter.
 
 - Only `static` methods with `int` parameters and `int`/`void` returns are
   callable.
-- Avoid string concatenation (`"x = " + n`): javac compiles it to
-  `invokedynamic`, which is not supported. Use `System.out.print("x = ")`
-  followed by `System.out.println(n)` instead.
+- String concatenation works only in the shape `"text " + anInt`, which javac
+  compiles to a single `makeConcatWithConstants` call (see
+  `examples/HelloWorld.java`). Joining two ints or another string is not
+  supported; use separate `print` calls instead.
+- In a jar, only the `Main-Class` is loaded. A call into any other class stops
+  with `invokestatic to foreign class ... is unsupported`, so keep the whole
+  demo in one class.
 
 Video: [MiniJVMExplainer.mp4](/video/media/videos/minijvm_explainer/720p30/MiniJVMExplainer.mp4)

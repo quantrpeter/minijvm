@@ -189,27 +189,8 @@ static void parse_class_attributes(Reader *r, ClassFile *cf) {
     }
 }
 
-ClassFile *classfile_load(const char *path) {
-    FILE *f = fopen(path, "rb");
-    if (!f) {
-        fprintf(stderr, "minijvm: cannot open %s\n", path);
-        exit(1);
-    }
-    fseek(f, 0, SEEK_END);
-    long size = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    if (size < 0) {
-        fprintf(stderr, "minijvm: cannot stat %s\n", path);
-        exit(1);
-    }
-    uint8_t *data = xmalloc((size_t)size);
-    if (fread(data, 1, (size_t)size, f) != (size_t)size) {
-        fprintf(stderr, "minijvm: cannot read %s\n", path);
-        exit(1);
-    }
-    fclose(f);
-
-    Reader r = { data, (size_t)size, 0, path };
+ClassFile *classfile_load_bytes(const uint8_t *data, size_t size, const char *name) {
+    Reader r = { data, size, 0, name };
     ClassFile *cf = xmalloc(sizeof(ClassFile));
 
     if (read_u4(&r) != 0xCAFEBABEu) die(&r, "bad magic number (not a class file)");
@@ -242,6 +223,30 @@ ClassFile *classfile_load(const char *path) {
     }
 
     parse_class_attributes(&r, cf);
+    return cf;
+}
+
+ClassFile *classfile_load(const char *path) {
+    FILE *f = fopen(path, "rb");
+    if (!f) {
+        fprintf(stderr, "minijvm: cannot open %s\n", path);
+        exit(1);
+    }
+    fseek(f, 0, SEEK_END);
+    long size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    if (size < 0) {
+        fprintf(stderr, "minijvm: cannot stat %s\n", path);
+        exit(1);
+    }
+    uint8_t *data = xmalloc((size_t)size);
+    if (fread(data, 1, (size_t)size, f) != (size_t)size) {
+        fprintf(stderr, "minijvm: cannot read %s\n", path);
+        exit(1);
+    }
+    fclose(f);
+
+    ClassFile *cf = classfile_load_bytes(data, (size_t)size, path);
     free(data);
     return cf;
 }
